@@ -76,6 +76,8 @@ class LdsLidar : public Lds {
                            uint8_t response, void *clent_data);
   static void SetPointCloudReturnModeCb(livox_status status, uint8_t handle,
                                         uint8_t response, void *clent_data);
+  static void SetScanPatternCb(livox_status status, uint8_t handle,
+                               DeviceParameterResponse *response, void *clent_data);
   static void SetCoordinateCb(livox_status status, uint8_t handle,
                               uint8_t response, void *clent_data);
   static void SetImuRatePushFrequencyCb(livox_status status, uint8_t handle,

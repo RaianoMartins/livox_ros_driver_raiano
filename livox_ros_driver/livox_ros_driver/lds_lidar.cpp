@@ -29,6 +29,8 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <chrono>
+#include <thread>
 
 #include "rapidjson/document.h"
 #include "rapidjson/filereadstream.h"
@@ -194,7 +196,8 @@ void LdsLidar::OnDeviceBroadcast(const BroadcastDeviceInfo *info) {
   bool result = false;
   uint8_t handle = 0;
   result = AddLidarToConnect(info->broadcast_code, &handle);
-  if (result == kStatusSuccess && handle < kMaxLidarCount) {
+  if (result == kStatusSuccess && handle < kMaxLidarCount) 
+  {
     SetDataCallback(handle, OnLidarDataCb, (void *)g_lds_ldiar);
 
     LidarDevice *p_lidar = &(g_lds_ldiar->lidars_[handle]);
@@ -202,10 +205,12 @@ void LdsLidar::OnDeviceBroadcast(const BroadcastDeviceInfo *info) {
     p_lidar->connect_state = kConnectStateOff;
 
     UserRawConfig config;
-    if (g_lds_ldiar->GetRawConfig(info->broadcast_code, config)) {
+    if (g_lds_ldiar->GetRawConfig(info->broadcast_code, config))
+    {
       printf("Could not find raw config, set config to default!\n");
       config.enable_fan = 1;
       config.return_mode = kFirstReturn;
+      config.pattern = kNoneRepetitiveScanPattern;
       config.coordinate = kCoordinateCartesian;
       config.imu_rate = kImuFreq200Hz;
       config.extrinsic_parameter_source = kNoneExtrinsicParameter;
@@ -214,12 +219,22 @@ void LdsLidar::OnDeviceBroadcast(const BroadcastDeviceInfo *info) {
 
     p_lidar->config.enable_fan = config.enable_fan;
     p_lidar->config.return_mode = config.return_mode;
+    p_lidar->config.pattern = config.pattern;
     p_lidar->config.coordinate = config.coordinate;
     p_lidar->config.imu_rate = config.imu_rate;
     p_lidar->config.extrinsic_parameter_source =
         config.extrinsic_parameter_source;
     p_lidar->config.enable_high_sensitivity = config.enable_high_sensitivity;
-  } else {
+
+    printf("DEBUG OnDeviceBroadcast: return_mode=%d pattern=%d coordinate=%d imu_rate=%d\n",
+       p_lidar->config.return_mode,
+       p_lidar->config.pattern,
+       p_lidar->config.coordinate,
+       p_lidar->config.imu_rate);
+  }
+
+  else
+  {
     printf("Add lidar to connect is failed : %d %d \n", result, handle);
   }
 }
@@ -236,6 +251,7 @@ void LdsLidar::OnDeviceChange(const DeviceInfo *info, DeviceEvent type) {
   }
 
   LidarDevice *p_lidar = &(g_lds_ldiar->lidars_[handle]);
+
   if (type == kEventConnect) {
     QueryDeviceInformation(handle, DeviceInformationCb, g_lds_ldiar);
     if (p_lidar->connect_state == kConnectStateOff) {
@@ -273,6 +289,15 @@ void LdsLidar::OnDeviceChange(const DeviceInfo *info, DeviceEvent type) {
             handle, (PointCloudReturnMode)(p_lidar->config.return_mode),
             SetPointCloudReturnModeCb, g_lds_ldiar);
         p_lidar->config.set_bits |= kConfigReturnMode;
+      }
+
+      if (kDeviceTypeLidarAvia == info->type)
+      {
+        p_lidar->config.set_bits |= kConfigScanPattern;
+
+        printf("DEBUG SetScanPattern: handle=%d pattern=%d\n",handle,p_lidar->config.pattern);
+
+        LidarSetScanPattern(handle,(LidarScanPattern)(p_lidar->config.pattern),SetScanPatternCb,g_lds_ldiar);
       }
 
       if ((kDeviceTypeLidarMid70 != info->type) &&
@@ -370,6 +395,43 @@ void LdsLidar::SetPointCloudReturnModeCb(livox_status status, uint8_t handle,
         handle, (PointCloudReturnMode)(p_lidar->config.return_mode),
         SetPointCloudReturnModeCb, lds_lidar);
     printf("Set return mode fail, try again!\n");
+  }
+}
+
+void LdsLidar::SetScanPatternCb(livox_status status,uint8_t handle,
+                                DeviceParameterResponse *response, void *clent_data)
+{
+  LdsLidar *lds_lidar = static_cast<LdsLidar *>(clent_data);
+
+  if (handle >= kMaxLidarCount) {
+    return;
+  }
+
+  LidarDevice *p_lidar = &(lds_lidar->lidars_[handle]);
+
+  if (status == kStatusSuccess && response != nullptr) {
+    printf("Set scan pattern success! pattern=%d\n",
+           p_lidar->config.pattern);
+
+    lock_guard<mutex> lock(lds_lidar->config_mutex_);
+
+    p_lidar->config.set_bits &= ~((uint32_t)(kConfigScanPattern));
+
+    if (!p_lidar->config.set_bits) {
+      LidarStartSampling(handle, StartSampleCb, lds_lidar);
+      p_lidar->connect_state = kConnectStateSampling;
+    }
+
+  } else {
+    printf("Set scan pattern fail, try again! status=%d pattern=%d\n",
+           status,
+           p_lidar->config.pattern);
+
+    LidarSetScanPattern(
+        handle,
+        (LidarScanPattern)(p_lidar->config.pattern),
+        SetScanPatternCb,
+        lds_lidar);
   }
 }
 
@@ -562,7 +624,8 @@ int LdsLidar::AddBroadcastCodeToWhitelist(const char *broadcast_code) {
 
   if (LdsLidar::IsBroadcastCodeExistInWhitelist(broadcast_code)) {
     printf("%s is alrealy exist!\n", broadcast_code);
-    return -1;
+
+    return 0;
   }
 
   strcpy(broadcast_code_whitelist_[whitelist_count_], broadcast_code);
@@ -641,9 +704,10 @@ int LdsLidar::ParseTimesyncConfig(rapidjson::Document &doc) {
 }
 
 /** Config file process */
-int LdsLidar::ParseConfigFile(const char *pathname) {
-  FILE *raw_file = std::fopen(pathname, "rb");
-  if (!raw_file) {
+int LdsLidar::ParseConfigFile(const char *pathname) {FILE *raw_file = std::fopen(pathname, "rb");
+
+  if (!raw_file)
+  {
     printf("Open json config file fail!\n");
     return -1;
   }
@@ -653,21 +717,30 @@ int LdsLidar::ParseConfigFile(const char *pathname) {
                                         sizeof(read_buffer));
 
   rapidjson::Document doc;
-  if (!doc.ParseStream(config_file).HasParseError()) {
-    if (doc.HasMember("lidar_config") && doc["lidar_config"].IsArray()) {
+
+  if (!doc.ParseStream(config_file).HasParseError())
+  {
+    if (doc.HasMember("lidar_config") && doc["lidar_config"].IsArray())
+    {
       const rapidjson::Value &array = doc["lidar_config"];
       size_t len = array.Size();
-      for (size_t i = 0; i < len; i++) {
+      for (size_t i = 0; i < len; i++)
+      {
         const rapidjson::Value &object = array[i];
-        if (object.IsObject()) {
+        if (object.IsObject())
+        {
           UserRawConfig config = {0};
           memset(&config, 0, sizeof(config));
-          if (object.HasMember("broadcast_code") &&
-              object["broadcast_code"].IsString()) {
+          config.pattern = kNoneRepetitiveScanPattern;
+
+          if (object.HasMember("broadcast_code") && object["broadcast_code"].IsString())
+          {
             std::string broadcast_code = object["broadcast_code"].GetString();
             std::strncpy(config.broadcast_code, broadcast_code.c_str(),
                          sizeof(config.broadcast_code));
-          } else {
+          }
+          else
+          {
             printf("User config file parse error\n");
             continue;
           }
@@ -676,34 +749,53 @@ int LdsLidar::ParseConfigFile(const char *pathname) {
               object["enable_connect"].IsBool()) {
             config.enable_connect = object["enable_connect"].GetBool();
           }
-          if (object.HasMember("enable_fan") && object["enable_fan"].IsBool()) {
+
+          if (object.HasMember("enable_fan") && object["enable_fan"].IsBool())
+          {
             config.enable_fan = object["enable_fan"].GetBool();
           }
-          if (object.HasMember("return_mode") &&
-              object["return_mode"].IsInt()) {
+
+          if (object.HasMember("return_mode") && object["return_mode"].IsInt())
+          {
             config.return_mode = object["return_mode"].GetInt();
           }
-          if (object.HasMember("coordinate") && object["coordinate"].IsInt()) {
-            config.coordinate = object["coordinate"].GetInt();
-          }
-          if (object.HasMember("imu_rate") && object["imu_rate"].IsInt()) {
-            config.imu_rate = object["imu_rate"].GetInt();
-          }
-          if (object.HasMember("extrinsic_parameter_source") &&
-              object["extrinsic_parameter_source"].IsInt()) {
-            config.extrinsic_parameter_source =
-                object["extrinsic_parameter_source"].GetInt();
-          }
-          if (object.HasMember("enable_high_sensitivity") &&
-              object["enable_high_sensitivity"].GetBool()) {
-            config.enable_high_sensitivity =
-                object["enable_high_sensitivity"].GetBool();
+
+          if (object.HasMember("pattern") && object["pattern"].IsInt())
+          {
+            config.pattern = object["pattern"].GetInt();
+            if (config.pattern != kNoneRepetitiveScanPattern && config.pattern != kRepetitiveScanPattern)
+            {
+              printf("Invalid scan pattern %d, use non-repetitive as default.\n", config.pattern);
+              config.pattern = kNoneRepetitiveScanPattern;
+            }
           }
 
-          printf("broadcast code[%s] : %d %d %d %d %d %d\n",
-                 config.broadcast_code, config.enable_connect,
-                 config.enable_fan, config.return_mode, config.coordinate,
-                 config.imu_rate, config.extrinsic_parameter_source);
+          if (object.HasMember("coordinate") && object["coordinate"].IsInt())
+          {
+            config.coordinate = object["coordinate"].GetInt();
+          }
+
+          if (object.HasMember("imu_rate") && object["imu_rate"].IsInt())
+          {
+            config.imu_rate = object["imu_rate"].GetInt();
+          }
+
+          if (object.HasMember("extrinsic_parameter_source") && object["extrinsic_parameter_source"].IsInt()) 
+          {
+            config.extrinsic_parameter_source = object["extrinsic_parameter_source"].GetInt();
+          }
+
+          if (object.HasMember("enable_high_sensitivity") && object["enable_high_sensitivity"].GetBool())
+          {
+            config.enable_high_sensitivity = object["enable_high_sensitivity"].GetBool();
+          }
+
+	  printf("broadcast code[%s] : %d %d %d %d %d %d %d\n",
+       		config.broadcast_code, config.enable_connect,
+       		config.enable_fan, config.return_mode, config.pattern,
+       		config.coordinate, config.imu_rate,
+       		config.extrinsic_parameter_source);
+
           if (config.enable_connect) {
             if (!AddBroadcastCodeToWhitelist(config.broadcast_code)) {
               if (AddRawUserConfig(config)) {
@@ -766,6 +858,7 @@ int LdsLidar::GetRawConfig(const char *broadcast_code, UserRawConfig &config) {
                 kBroadcastCodeSize) == 0) {
       config.enable_fan = ite_config.enable_fan;
       config.return_mode = ite_config.return_mode;
+      config.pattern = ite_config.pattern;
       config.coordinate = ite_config.coordinate;
       config.imu_rate = ite_config.imu_rate;
       config.extrinsic_parameter_source = ite_config.extrinsic_parameter_source;

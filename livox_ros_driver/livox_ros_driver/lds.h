@@ -104,6 +104,7 @@ typedef enum {
   kConfigImuRate = 1 << 3,
   kConfigGetExtrinsicParameter = 1 << 4,
   kConfigSetHighSensitivity = 1 << 5,
+  kConfigScanPattern = 1 << 6,
   kConfigUndef
 } LidarConfigCodeBit;
 
@@ -140,6 +141,7 @@ typedef struct {
   bool enable_connect;
   bool enable_fan;
   uint32_t return_mode;
+  uint32_t pattern;
   uint32_t coordinate;
   uint32_t imu_rate;
   uint32_t extrinsic_parameter_source;
@@ -149,6 +151,7 @@ typedef struct {
 typedef struct {
   bool enable_fan;
   uint32_t return_mode;
+  uint32_t pattern;
   uint32_t coordinate;
   uint32_t imu_rate;
   uint32_t extrinsic_parameter_source;
